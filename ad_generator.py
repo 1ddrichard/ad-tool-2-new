@@ -133,6 +133,32 @@ def create_xls_file(df):
 # 3. Streamlit 界面
 # =========================================================================
 st.set_page_config(page_title="广告配置生成器", layout="wide")
+# =========================================================================
+# 👇👇👇 在这里添加隐藏代码 👇👇👇
+# =========================================================================
+hide_streamlit_style = """
+    <style>
+    /* 隐藏右上角的 Deploy 按钮/GitHub 图标 */
+    .stDeployButton {
+        visibility: hidden;
+    }
+    
+    /* 隐藏右上角的“三道杠”菜单 (可选，不想隐藏就把这行删掉) */
+    /* #MainMenu {visibility: hidden;} */
+    
+    /* 隐藏底部的 "Made with Streamlit" 字样 */
+    footer {
+        visibility: hidden;
+    }
+    
+    /* 隐藏顶部的彩色线条装饰 (可选) */
+    header {
+        visibility: hidden;
+    }
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+# =========================================================================
 st.title("🌊 广告配置自动化工具")
 
 # 侧边栏说明
