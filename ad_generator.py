@@ -62,7 +62,7 @@ def clean_val(val):
     s_val = str(val)
     if s_val.endswith(".0"):
         return s_val[:-2]
-    return val
+    return s_val  # 👈 核心修改：从 return val 改为 return s_val，确保它是字符串
 
 def process_rows(channel, p_name, p_id, t_id):
     """根据用户输入，深度复制模板行并替换关键字段"""
@@ -159,15 +159,20 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # =========================================================================
-st.title("🌊 广告配置自动化工具")
+st.title("广告配置自动化工具")
 
+# 侧边栏说明
 # 侧边栏说明
 with st.sidebar:
     st.info("配置加载状态：")
     if RAW_DATA:
         for ch in RAW_DATA.keys():
             row_count = len(RAW_DATA[ch].get('rows', []))
-            st.success(f"✅ {ch}: {row_count} 条模版")
+            # 👇 新增：读取 note 字段
+            note = RAW_DATA[ch].get('note', '')
+            label = f"{ch} ({note})" if note else ch
+            
+            st.success(f"✅ {label}: {row_count} 条模版")
     else:
         st.error("❌ 未加载到任何配置，请检查 json 文件。")
 
