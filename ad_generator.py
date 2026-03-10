@@ -141,22 +141,30 @@ st.set_page_config(page_title="广告配置生成器", layout="wide")
 # =========================================================================
 hide_streamlit_style = """
     <style>
-    /* 隐藏右上角的 Deploy 按钮/GitHub 图标 */
     .stDeployButton {
         visibility: hidden;
     }
-    
-    /* 隐藏右上角的“三道杠”菜单 (可选，不想隐藏就把这行删掉) */
-    /* #MainMenu {visibility: hidden;} */
-    
-    /* 隐藏底部的 "Made with Streamlit" 字样 */
     footer {
         visibility: hidden;
     }
-    
-    /* 隐藏顶部的彩色线条装饰 (可选) */
     header {
         visibility: hidden;
+    }
+    /* 隐藏右下角 Streamlit Community Cloud 悬浮图标 */
+    ._profileContainer_gzau3_53 {
+        visibility: hidden;
+    }
+    [data-testid="manage-app-button"] {
+        visibility: hidden;
+    }
+    .viewerBadge_container__r5tak {
+        visibility: hidden;
+    }
+    div[class*="StatusWidget"] {
+        visibility: hidden;
+    }
+    iframe[title="chat"] {
+        display: none;
     }
     </style>
 """
@@ -169,9 +177,14 @@ st.title("广告配置自动化工具")
 with st.sidebar:
     # 版本信息
     st.markdown("### 📋 工具信息")
-    st.markdown("**版本:** v1.1.0 · 2026-03-06")
+    st.markdown("**版本:** v1.2.0 · 2026-03-10")
     with st.expander("📝 更新日志"):
         st.markdown("""
+**v1.2.0** (2026-03-10)
+- 新增穿山甲new50/优量汇new50渠道模板
+- 移除旧版穿山甲new1/优量汇new2
+- 隐藏右下角 Streamlit 悬浮图标
+
 **v1.1.0** (2026-03-06)
 - 修复穿山甲new1/优量汇new2配置替换失效
 - 输出格式从 .xls 升级为 .xlsx
