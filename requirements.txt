@@ -1,3 +1,2 @@
--e streamlit
 pandas
 xlwt
