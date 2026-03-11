@@ -5,7 +5,7 @@ import zipfile
 import json
 import os
 from datetime import datetime
-from openpyxl import Workbook
+import xlwt
 
 # =========================================================================
 # 1. 初始化配置与数据加载
@@ -101,21 +101,19 @@ def process_rows(channel, p_name, p_id, t_id):
     # 确保列顺序一致
     return pd.DataFrame(new_rows, columns=columns)
 
-def create_xlsx_file(df):
+def create_xls_file(df):
     output = io.BytesIO()
-    workbook = Workbook()
-    worksheet = workbook.active
-    worksheet.title = 'Sheet1'
+    workbook = xlwt.Workbook(encoding='utf-8')
+    worksheet = workbook.add_sheet('Sheet1')
     
     # 写入表头
-    for col_idx, header in enumerate(df.columns, start=1):
-        worksheet.cell(row=1, column=col_idx, value=header)
+    for col_idx, header in enumerate(df.columns):
+        worksheet.write(0, col_idx, header)
     
     # 写入数据行
     for row_idx, row_data in df.iterrows():
-        for col_idx, value in enumerate(row_data, start=1):
+        for col_idx, value in enumerate(row_data):
             val = value
-            # 尝试将字符串转换为数字，解决 Excel "文本存储为数字" 的问题
             if isinstance(val, str):
                 val_stripped = val.strip()
                 try:
@@ -126,7 +124,7 @@ def create_xlsx_file(df):
                         val = f_val
                 except (ValueError, TypeError):
                     pass
-            worksheet.cell(row=row_idx + 2, column=col_idx, value=val)
+            worksheet.write(row_idx + 1, col_idx, val)
             
     workbook.save(output)
     output.seek(0)
@@ -177,9 +175,12 @@ st.title("广告配置自动化工具")
 with st.sidebar:
     # 版本信息
     st.markdown("### 📋 工具信息")
-    st.markdown("**版本:** v1.2.0 · 2026-03-10")
+    st.markdown("**版本:** v1.2.1 · 2026-03-11")
     with st.expander("📝 更新日志"):
         st.markdown("""
+**v1.2.1** (2026-03-11)
+- 恢复 .xls 格式输出，兼容公司后台上传
+
 **v1.2.0** (2026-03-10)
 - 新增穿山甲new50/优量汇new50渠道模板
 - 移除旧版穿山甲new1/优量汇new2
@@ -320,8 +321,8 @@ if st.button("🚀 立即生成配置文档", type="primary"):
                         final_df = process_rows(ch, p_name, p_id, t_id)
                         
                         if not final_df.empty:
-                            xls_data = create_xlsx_file(final_df)
-                            fname = f"{ch}_{p_name}.xlsx"
+                            xls_data = create_xls_file(final_df)
+                            fname = f"{ch}_{p_name}.xls"
                             zf.writestr(fname, xls_data.getvalue())
                             file_count += 1
             
