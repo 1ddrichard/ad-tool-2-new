@@ -46,7 +46,6 @@ def load_configurations():
         return {}
 
 # 加载数据 (使用 st.cache_data 避免每次刷新都重读 IO)
-@st.cache_data
 def get_raw_data():
     return load_configurations()
 
