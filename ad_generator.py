@@ -46,6 +46,7 @@ def load_configurations():
         return {}
 
 # 加载数据 (使用 st.cache_data 避免每次刷新都重读 IO)
+@st.cache_data
 def get_raw_data():
     return load_configurations()
 
@@ -64,6 +65,55 @@ def clean_val(val):
     if s_val.endswith(".0"):
         return s_val[:-2]
     return s_val
+
+# Appid 管理导入模板：广告ID开头 → 变现平台/账号ID 映射
+PLATFORM_MAP = {
+    "5": {"platform": "headline", "account_id": "61887"},
+    "1": {"platform": "GDT", "account_id": "1846680534"},
+    "2": {"platform": "kuaishou", "account_id": "25458"},
+}
+
+def get_platform_info(ad_id):
+    """根据广告ID开头数字判断变现平台"""
+    ad_id_str = str(ad_id).strip()
+    if ad_id_str:
+        first_char = ad_id_str[0]
+        if first_char in PLATFORM_MAP:
+            return PLATFORM_MAP[first_char]
+    return None
+
+def get_channel_platform_prefix(channel_name):
+    """根据渠道名称返回对应的广告ID开头数字"""
+    ch_lower = channel_name.lower()
+    if "穿山甲" in ch_lower:
+        return "5"
+    elif "优量汇" in ch_lower:
+        return "1"
+    elif "快手" in ch_lower:
+        return "2"
+    return None
+
+def create_appid_xls(rows_data):
+    """生成 Appid 管理导入模板 xls"""
+    output = io.BytesIO()
+    workbook = xlwt.Workbook(encoding='utf-8')
+    worksheet = workbook.add_sheet('Sheet1')
+    
+    headers = ["应用", "变现平台", "子渠道", "账号id", "tappid", "备注"]
+    for col_idx, header in enumerate(headers):
+        worksheet.write(0, col_idx, header)
+    
+    for row_idx, row in enumerate(rows_data):
+        for col_idx, val in enumerate(row):
+            # 数字列转为整数写入
+            if isinstance(val, str) and val.isdigit():
+                worksheet.write(row_idx + 1, col_idx, int(val))
+            else:
+                worksheet.write(row_idx + 1, col_idx, val)
+    
+    workbook.save(output)
+    output.seek(0)
+    return output
 
 def process_rows(channel, p_name, p_id, t_id):
     """根据用户输入，深度复制模板行并替换关键字段"""
@@ -174,9 +224,14 @@ st.title("广告配置自动化工具")
 with st.sidebar:
     # 版本信息
     st.markdown("### 📋 工具信息")
-    st.markdown("**版本:** v1.2.1 · 2026-03-11")
+    st.markdown("**版本:** v1.3.0 · 2026-04-21")
     with st.expander("📝 更新日志"):
         st.markdown("""
+**v1.3.0** (2026-04-21)
+- 广告ID智能匹配渠道（5开头=穿山甲、1开头=优量汇、2开头=快手）
+- 自动生成 Appid 管理导入模板，随配置文件一起打包下载
+- 选择多渠道时校验是否都有对应广告ID
+
 **v1.2.1** (2026-03-11)
 - 恢复 .xls 格式输出，兼容公司后台上传
 
@@ -252,6 +307,7 @@ selected_channels = st.multiselect(
 
 # 2. 输入表格
 st.subheader("2. 批量输入产品信息")
+st.caption("同一产品配置多个平台时，请分多行输入，每行填写对应平台的广告ID（穿山甲5开头、优量汇1开头、快手2开头）")
 
 if 'input_df' not in st.session_state:
     st.session_state.input_df = pd.DataFrame([{
@@ -266,7 +322,7 @@ edited_df = st.data_editor(
     column_config={
         "产品ID": st.column_config.TextColumn("产品ID", help="对应平台的应用ID"),
         "产品名称": st.column_config.TextColumn("产品名称", help="新产品的中文名称"),
-        "广告ID": st.column_config.TextColumn("广告ID", help="对应平台的广告位ID (tappid)"),
+        "广告ID": st.column_config.TextColumn("广告ID", help="穿山甲5开头、优量汇1开头、快手2开头"),
     }
 )
 
@@ -300,23 +356,50 @@ if st.button("🚀 立即生成配置文档", type="primary"):
             elif not t_id.isdigit():
                 st.error(f"第 {idx+1} 行：广告ID必须为纯数字，当前值: {t_id}")
                 has_error = True
+            elif not get_platform_info(t_id):
+                st.error(f"第 {idx+1} 行：广告ID '{t_id}' 无法识别平台（需以5/1/2开头）")
+                has_error = True
+        
+        # 校验：每个选中的渠道是否都有对应的广告ID
+        if not has_error:
+            for ch in selected_channels:
+                prefix = get_channel_platform_prefix(ch)
+                if prefix:
+                    matched = False
+                    for idx, row in edited_df.iterrows():
+                        t_id = str(row.get("广告ID", "")).strip()
+                        if t_id and t_id[0] == prefix:
+                            matched = True
+                            break
+                    if not matched:
+                        prefix_map = {"5": "穿山甲(5开头)", "1": "优量汇(1开头)", "2": "快手(2开头)"}
+                        st.error(f"选择了渠道 [{ch}]，但未找到对应的广告ID（需{prefix_map.get(prefix, prefix+'开头')}）")
+                        has_error = True
         
         if has_error:
             st.warning("请修正以上错误后再生成。")
         else:
             zip_buffer = io.BytesIO()
             file_count = 0
+            appid_rows = []  # 收集 Appid 导入数据
             
             with zipfile.ZipFile(zip_buffer, "w") as zf:
-                for idx, row in edited_df.iterrows():
-                    p_name = row.get("产品名称", "")
-                    p_id = str(row.get("产品ID", ""))
-                    t_id = str(row.get("广告ID", ""))
+                for ch in selected_channels:
+                    ch_prefix = get_channel_platform_prefix(ch)
                     
-                    if not p_name or not p_id: 
-                        continue
-                    
-                    for ch in selected_channels:
+                    for idx, row in edited_df.iterrows():
+                        p_name = str(row.get("产品名称", "")).strip()
+                        p_id = str(row.get("产品ID", "")).strip()
+                        t_id = str(row.get("广告ID", "")).strip()
+                        
+                        if not p_name or not p_id or not t_id:
+                            continue
+                        
+                        # 只用广告ID开头匹配当前渠道的行
+                        if ch_prefix and t_id[0] != ch_prefix:
+                            continue
+                        
+                        # 生成广告配置文件
                         final_df = process_rows(ch, p_name, p_id, t_id)
                         
                         if not final_df.empty:
@@ -324,9 +407,23 @@ if st.button("🚀 立即生成配置文档", type="primary"):
                             fname = f"{ch}_{p_name}.xls"
                             zf.writestr(fname, xls_data.getvalue())
                             file_count += 1
+                        
+                        # 收集 Appid 导入数据
+                        platform_info = get_platform_info(t_id)
+                        if platform_info:
+                            appid_row = [p_id, platform_info["platform"], "", platform_info["account_id"], t_id, ""]
+                            if appid_row not in appid_rows:  # 去重
+                                appid_rows.append(appid_row)
+                
+                # 生成 Appid 管理导入模板
+                if appid_rows:
+                    appid_xls = create_appid_xls(appid_rows)
+                    # 用第一个产品名称命名
+                    first_name = str(edited_df.iloc[0].get("产品名称", "产品")).strip()
+                    zf.writestr(f"Appid导入_{first_name}.xls", appid_xls.getvalue())
             
             if file_count > 0:
-                st.success(f"✅ 成功生成 {file_count} 个文件！")
+                st.success(f"✅ 成功生成 {file_count} 个配置文件 + {len(appid_rows)} 条Appid导入记录！")
                 st.download_button(
                     label="📥 下载所有文件 (.zip)",
                     data=zip_buffer.getvalue(),
