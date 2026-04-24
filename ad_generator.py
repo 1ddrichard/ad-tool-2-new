@@ -331,24 +331,35 @@ else:
 
 # 2. 输入表格
 st.subheader("2. 批量输入产品信息")
-st.caption("同一产品配置多个平台时，请分多行输入，每行填写对应平台的广告ID（穿山甲5开头、优量汇1开头、快手2开头）")
+st.caption("直接从管理表复制粘贴即可，对应平台的广告ID留空则不生成该平台配置")
 
 if 'input_df' not in st.session_state:
     st.session_state.input_df = pd.DataFrame([{
-        "产品ID": "12345", 
-        "产品名称": "示例产品", 
-        "广告ID": "67890"
+        "应用ID": "", 
+        "应用名称": "", 
+        "穿山甲appid": "",
+        "优量汇appid": "",
+        "快手appid": "",
     }])
 
 edited_df = st.data_editor(
     st.session_state.input_df,
     num_rows="dynamic",
     column_config={
-        "产品ID": st.column_config.TextColumn("产品ID", help="对应平台的应用ID"),
-        "产品名称": st.column_config.TextColumn("产品名称", help="新产品的中文名称"),
-        "广告ID": st.column_config.TextColumn("广告ID", help="穿山甲5开头、优量汇1开头、快手2开头"),
+        "应用ID": st.column_config.TextColumn("应用ID", help="产品的应用ID"),
+        "应用名称": st.column_config.TextColumn("应用名称", help="产品的中文名称"),
+        "穿山甲appid": st.column_config.TextColumn("穿山甲appid", help="穿山甲广告位ID（5开头）"),
+        "优量汇appid": st.column_config.TextColumn("优量汇appid", help="优量汇广告位ID（1开头）"),
+        "快手appid": st.column_config.TextColumn("快手appid", help="快手广告位ID（2开头）"),
     }
 )
+
+# 平台列 → 渠道名前缀 + 广告ID前缀 映射
+COLUMN_PLATFORM = {
+    "穿山甲appid": {"prefix": "5", "keyword": "穿山甲"},
+    "优量汇appid": {"prefix": "1", "keyword": "优量汇"},
+    "快手appid":   {"prefix": "2", "keyword": "快手"},
+}
 
 # 3. 生成
 st.markdown("---")
@@ -360,44 +371,80 @@ if st.button("🚀 立即生成配置文档", type="primary"):
     else:
         # 输入校验
         has_error = False
+        seen_ids = {}  # 用于重复检测: {id_value: [(行号, 列名), ...]}
+        
         for idx, row in edited_df.iterrows():
-            p_name = str(row.get("产品名称", "")).strip()
-            p_id = str(row.get("产品ID", "")).strip()
-            t_id = str(row.get("广告ID", "")).strip()
+            app_name = str(row.get("应用名称", "")).strip()
+            app_id = str(row.get("应用ID", "")).strip()
             
-            if not p_name or p_name == "nan":
-                st.error(f"第 {idx+1} 行：产品名称不能为空")
+            if not app_id or app_id == "nan":
+                st.error(f"第 {idx+1} 行：应用ID不能为空")
                 has_error = True
-            if not p_id or p_id == "nan":
-                st.error(f"第 {idx+1} 行：产品ID不能为空")
+            elif not app_id.isdigit():
+                st.error(f"第 {idx+1} 行：应用ID必须为纯数字，当前值: {app_id}")
                 has_error = True
-            elif not p_id.isdigit():
-                st.error(f"第 {idx+1} 行：产品ID必须为纯数字，当前值: {p_id}")
+            else:
+                # 检查应用ID重复
+                key = f"应用ID:{app_id}"
+                if key in seen_ids:
+                    seen_ids[key].append((idx+1, "应用ID"))
+                else:
+                    seen_ids[key] = [(idx+1, "应用ID")]
+            
+            if not app_name or app_name == "nan":
+                st.error(f"第 {idx+1} 行：应用名称不能为空")
                 has_error = True
-            if not t_id or t_id == "nan":
-                st.error(f"第 {idx+1} 行：广告ID不能为空")
-                has_error = True
-            elif not t_id.isdigit():
-                st.error(f"第 {idx+1} 行：广告ID必须为纯数字，当前值: {t_id}")
-                has_error = True
-            elif not get_platform_info(t_id):
-                st.error(f"第 {idx+1} 行：广告ID '{t_id}' 无法识别平台（需以5/1/2开头）")
+            
+            # 校验每个平台的 appid
+            has_any_adid = False
+            for col_name, info in COLUMN_PLATFORM.items():
+                ad_id = str(row.get(col_name, "")).strip()
+                if ad_id and ad_id != "nan":
+                    has_any_adid = True
+                    if not ad_id.isdigit():
+                        st.error(f"第 {idx+1} 行 [{col_name}]：必须为纯数字，当前值: {ad_id}")
+                        has_error = True
+                    elif ad_id[0] != info["prefix"]:
+                        st.error(f"第 {idx+1} 行 [{col_name}]：应以 {info['prefix']} 开头，当前值: {ad_id}")
+                        has_error = True
+                    else:
+                        # 检查广告ID重复
+                        key = f"{col_name}:{ad_id}"
+                        if key in seen_ids:
+                            seen_ids[key].append((idx+1, col_name))
+                        else:
+                            seen_ids[key] = [(idx+1, col_name)]
+            
+            if not has_any_adid:
+                st.error(f"第 {idx+1} 行：至少需要填写一个平台的广告ID")
                 has_error = True
         
-        # 校验：每个选中的渠道是否都有对应的广告ID
+        # 报告重复ID
+        for key, locations in seen_ids.items():
+            if len(locations) > 1:
+                col_label = key.split(":")[0]
+                id_val = key.split(":")[1]
+                rows_str = "、".join([f"第{loc[0]}行" for loc in locations])
+                st.error(f"⚠️ 重复ID: [{col_label}] 值 {id_val} 在 {rows_str} 重复出现")
+                has_error = True
+        
+        # 校验：选中的渠道是否有对应的广告ID
         if not has_error:
             for ch in selected_channels:
-                prefix = get_channel_platform_prefix(ch)
-                if prefix:
-                    matched = False
+                ch_keyword = None
+                for col_name, info in COLUMN_PLATFORM.items():
+                    if info["keyword"] in ch:
+                        ch_keyword = col_name
+                        break
+                if ch_keyword:
+                    has_match = False
                     for idx, row in edited_df.iterrows():
-                        t_id = str(row.get("广告ID", "")).strip()
-                        if t_id and t_id[0] == prefix:
-                            matched = True
+                        ad_id = str(row.get(ch_keyword, "")).strip()
+                        if ad_id and ad_id != "nan":
+                            has_match = True
                             break
-                    if not matched:
-                        prefix_map = {"5": "穿山甲(5开头)", "1": "优量汇(1开头)", "2": "快手(2开头)"}
-                        st.error(f"选择了渠道 [{ch}]，但未找到对应的广告ID（需{prefix_map.get(prefix, prefix+'开头')}）")
+                    if not has_match:
+                        st.error(f"选择了渠道 [{ch}]，但没有任何行填写了 [{ch_keyword}]")
                         has_error = True
         
         if has_error:
@@ -408,42 +455,48 @@ if st.button("🚀 立即生成配置文档", type="primary"):
             appid_rows = []  # 收集 Appid 导入数据
             
             with zipfile.ZipFile(zip_buffer, "w") as zf:
-                for ch in selected_channels:
-                    ch_prefix = get_channel_platform_prefix(ch)
+                for idx, row in edited_df.iterrows():
+                    app_name = str(row.get("应用名称", "")).strip()
+                    app_id = str(row.get("应用ID", "")).strip()
                     
-                    for idx, row in edited_df.iterrows():
-                        p_name = str(row.get("产品名称", "")).strip()
-                        p_id = str(row.get("产品ID", "")).strip()
-                        t_id = str(row.get("广告ID", "")).strip()
+                    if not app_name or not app_id:
+                        continue
+                    
+                    for ch in selected_channels:
+                        # 找到该渠道对应的列
+                        target_col = None
+                        for col_name, info in COLUMN_PLATFORM.items():
+                            if info["keyword"] in ch:
+                                target_col = col_name
+                                break
                         
-                        if not p_name or not p_id or not t_id:
+                        if not target_col:
                             continue
                         
-                        # 只用广告ID开头匹配当前渠道的行
-                        if ch_prefix and t_id[0] != ch_prefix:
+                        ad_id = str(row.get(target_col, "")).strip()
+                        if not ad_id or ad_id == "nan":
                             continue
                         
                         # 生成广告配置文件
-                        final_df = process_rows(ch, p_name, p_id, t_id)
+                        final_df = process_rows(ch, app_name, app_id, ad_id)
                         
                         if not final_df.empty:
                             xls_data = create_xls_file(final_df)
-                            fname = f"{ch}_{p_name}.xls"
+                            fname = f"{ch}_{app_name}.xls"
                             zf.writestr(fname, xls_data.getvalue())
                             file_count += 1
                         
                         # 收集 Appid 导入数据
-                        platform_info = get_platform_info(t_id)
+                        platform_info = get_platform_info(ad_id)
                         if platform_info:
-                            appid_row = [p_id, platform_info["platform"], "", platform_info["account_id"], t_id, ""]
-                            if appid_row not in appid_rows:  # 去重
+                            appid_row = [app_id, platform_info["platform"], "", platform_info["account_id"], ad_id, ""]
+                            if appid_row not in appid_rows:
                                 appid_rows.append(appid_row)
                 
                 # 生成 Appid 管理导入模板
                 if appid_rows:
                     appid_xls = create_appid_xls(appid_rows)
-                    # 用第一个产品名称命名
-                    first_name = str(edited_df.iloc[0].get("产品名称", "产品")).strip()
+                    first_name = str(edited_df.iloc[0].get("应用名称", "产品")).strip()
                     zf.writestr(f"Appid导入_{first_name}.xls", appid_xls.getvalue())
             
             if file_count > 0:
