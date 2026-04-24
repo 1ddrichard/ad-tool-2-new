@@ -296,14 +296,38 @@ with st.sidebar:
     else:
         st.error("❌ 未加载到任何配置，请检查 json 文件。")
 
-# 1. 选择渠道 (动态从配置中读取 key)
+# 1. 选择渠道 (按钮式多选)
 st.subheader("1. 选择广告渠道")
 available_channels = list(RAW_DATA.keys()) if RAW_DATA else []
-selected_channels = st.multiselect(
-    "请选择目标平台:", 
-    options=available_channels, 
-    default=[available_channels[0]] if available_channels else None
-)
+
+# 初始化选中状态
+if 'selected_channels' not in st.session_state:
+    st.session_state.selected_channels = set()
+
+# 按钮点击切换选中状态
+cols = st.columns(min(len(available_channels), 4)) if available_channels else []
+for i, ch in enumerate(available_channels):
+    col = cols[i % min(len(available_channels), 4)]
+    note = RAW_DATA[ch].get('note', '')
+    label = f"{ch}\n({note})" if note else ch
+    is_selected = ch in st.session_state.selected_channels
+    
+    with col:
+        if is_selected:
+            if st.button(f"✅ {label}", key=f"ch_{ch}", use_container_width=True):
+                st.session_state.selected_channels.discard(ch)
+                st.rerun()
+        else:
+            if st.button(f"⬜ {label}", key=f"ch_{ch}", use_container_width=True):
+                st.session_state.selected_channels.add(ch)
+                st.rerun()
+
+selected_channels = list(st.session_state.selected_channels)
+
+if selected_channels:
+    st.caption(f"已选择: {', '.join(selected_channels)}")
+else:
+    st.caption("请点击上方按钮选择渠道")
 
 # 2. 输入表格
 st.subheader("2. 批量输入产品信息")
