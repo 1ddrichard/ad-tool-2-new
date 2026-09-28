@@ -4,8 +4,19 @@ import io
 import zipfile
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime
 import xlwt
+
+GROMORE_CHANNEL = "GroMore"
+GROMORE_TEMPLATE_PATH = "templates/gromore.csv"
+GROMORE_COLUMNS = [
+    "平台", "广告源类型", "广告使用类型", '区分应用内外("应用外"和"应用内")',
+    'bidding模式("是"和"否")', "广告拓展名", "sdk-code", "sdk-appid", "sdk-appkey",
+    "所属应用", "所属子渠道", "备注", "广告策略", "广告配置子渠道", "预估ecpm",
+    "分配比例", "自定义参数", "替换已有code",
+]
 
 # =========================================================================
 # 1. 初始化配置与数据加载
@@ -65,6 +76,67 @@ def clean_val(val):
     if s_val.endswith(".0"):
         return s_val[:-2]
     return s_val
+
+def normalize_file_key(value):
+    """统一产品名/文件名，供批量上传时精确绑定。"""
+    value = unicodedata.normalize("NFKC", str(value or ""))
+    return re.sub(r"\s+", "", value).lower()
+
+def read_gromore_ad_file(uploaded_file):
+    """读取平台导出的 xls/xlsx，仅保留广告位名称与广告位 ID。"""
+    uploaded_file.seek(0)
+    df = pd.read_excel(uploaded_file, dtype=str)
+    df.columns = [str(col).strip() for col in df.columns]
+    required = {"广告位名称", "广告位ID"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"缺少字段：{'、'.join(sorted(missing))}")
+
+    result = df[["广告位名称", "广告位ID"]].copy()
+    result["广告位名称"] = result["广告位名称"].map(clean_val).str.strip()
+    result["广告位ID"] = result["广告位ID"].map(clean_val).str.strip()
+    result = result[(result["广告位名称"] != "") & (result["广告位ID"] != "")]
+    if result.empty:
+        raise ValueError("文件中没有可用的广告位数据")
+    if result["广告位名称"].duplicated().any():
+        names = result.loc[result["广告位名称"].duplicated(False), "广告位名称"].unique()
+        raise ValueError(f"广告位名称重复：{'、'.join(names)}")
+    if not result["广告位ID"].map(str.isdigit).all():
+        raise ValueError("广告位ID必须为纯数字")
+    return result
+
+def expected_gromore_ad_name(ad_type, extension):
+    """将模板拓展名转换成平台导出文件中的广告位名称。"""
+    prefixes = {"视频": "video_", "开屏": "splash_", "插屏": "plaque_", "信息流": "msg_"}
+    prefixed = f"{prefixes.get(ad_type, '')}{extension}"
+    return [extension, prefixed] if prefixed != extension else [extension]
+
+def create_gromore_rows(app_id, sdk_appid, ad_positions):
+    """按模板行精确匹配广告位，并返回导入表和未匹配项。"""
+    template = pd.read_csv(GROMORE_TEMPLATE_PATH, dtype=str, keep_default_na=False)
+    by_name = dict(zip(ad_positions["广告位名称"], ad_positions["广告位ID"]))
+    output_rows = []
+    missing = []
+    used_names = set()
+
+    for _, row in template.iterrows():
+        extension = clean_val(row["广告拓展名"]).strip()
+        candidates = expected_gromore_ad_name(clean_val(row["广告使用类型"]).strip(), extension)
+        matches = [name for name in candidates if name in by_name]
+        if len(matches) != 1:
+            missing.append(extension)
+            continue
+        matched_name = matches[0]
+        new_row = row.map(clean_val)
+        new_row["sdk-code"] = by_name[matched_name]
+        new_row["sdk-appid"] = sdk_appid
+        new_row["所属应用"] = app_id
+        output_rows.append(new_row)
+        used_names.add(matched_name)
+
+    output = pd.DataFrame(output_rows, columns=GROMORE_COLUMNS)
+    unused = [name for name in ad_positions["广告位名称"] if name not in used_names]
+    return output, missing, unused
 
 # Appid 管理导入模板：广告ID开头 → 变现平台/账号ID 映射
 PLATFORM_MAP = {
@@ -224,9 +296,15 @@ st.title("广告配置自动化工具")
 with st.sidebar:
     # 版本信息
     st.markdown("### 📋 工具信息")
-    st.markdown("**版本:** v1.3.2 · 2026-09-02")
+    st.markdown("**版本:** v1.4.0 · 2026-09-28")
     with st.expander("📝 更新日志"):
         st.markdown("""
+**v1.4.0** (2026-09-28)
+- 新增 GroMore M 聚合广告源配置
+- 支持批量上传平台广告位文件，按产品名称或应用ID自动绑定
+- 自动匹配广告拓展名与 sdk-code，并校验缺失、重复和未使用广告位
+- GroMore 配置随其他渠道文件一起打包下载
+
 **v1.3.2** (2026-09-02)
 - 新增穿山甲广告位：视频声音、物理广告位名称列
 
@@ -260,9 +338,10 @@ with st.sidebar:
     with st.expander("📖 使用说明"):
         st.markdown("""
 1. **选择渠道** — 勾选需要生成配置的广告平台
-2. **填写产品信息** — 在表格中输入产品ID、名称、广告ID（均为纯数字）
-3. **批量生成** — 点击生成按钮，下载包含所有配置的 zip 包
-4. 支持多行输入，一次生成多个产品的配置
+2. **填写产品信息** — 在表格中输入产品ID、名称和所需平台 appid
+3. **GroMore** — 上传以“产品名称”或“应用ID”命名的广告位 xls/xlsx 文件
+4. **批量生成** — 点击生成按钮，下载包含所有配置的 zip 包
+5. 支持多行输入，一次生成多个产品的配置
 
 ⚠️ 产品ID和广告ID请从对应平台后台获取
         """)
@@ -302,6 +381,7 @@ with st.sidebar:
 # 1. 选择渠道 (按钮式多选)
 st.subheader("1. 选择广告渠道")
 available_channels = list(RAW_DATA.keys()) if RAW_DATA else []
+available_channels.append(GROMORE_CHANNEL)
 
 # 初始化选中状态
 if 'selected_channels' not in st.session_state:
@@ -311,7 +391,7 @@ if 'selected_channels' not in st.session_state:
 cols = st.columns(min(len(available_channels), 4)) if available_channels else []
 for i, ch in enumerate(available_channels):
     col = cols[i % min(len(available_channels), 4)]
-    note = RAW_DATA[ch].get('note', '')
+    note = "M聚合" if ch == GROMORE_CHANNEL else RAW_DATA[ch].get('note', '')
     label = f"{ch}\n({note})" if note else ch
     is_selected = ch in st.session_state.selected_channels
     
@@ -343,7 +423,12 @@ if 'input_df' not in st.session_state:
         "穿山甲appid": "",
         "优量汇appid": "",
         "快手appid": "",
+        "GroMore sdk-appid": "",
     }])
+
+# 兼容旧会话中的输入表结构
+if "GroMore sdk-appid" not in st.session_state.input_df.columns:
+    st.session_state.input_df["GroMore sdk-appid"] = ""
 
 edited_df = st.data_editor(
     st.session_state.input_df,
@@ -354,6 +439,9 @@ edited_df = st.data_editor(
         "穿山甲appid": st.column_config.TextColumn("穿山甲appid", help="穿山甲广告位ID（5开头）"),
         "优量汇appid": st.column_config.TextColumn("优量汇appid", help="优量汇广告位ID（1开头）"),
         "快手appid": st.column_config.TextColumn("快手appid", help="快手广告位ID（2开头）"),
+        "GroMore sdk-appid": st.column_config.TextColumn(
+            "GroMore sdk-appid", help="GroMore 的 SDK 应用 ID；选择 GroMore 时填写"
+        ),
     }
 )
 
@@ -364,7 +452,86 @@ COLUMN_PLATFORM = {
     "快手appid":   {"prefix": "2", "keyword": "快手"},
 }
 
-# 3. 生成
+# GroMore 广告位文件按“产品名称”或“应用ID”绑定到产品行
+gromore_files_by_row = {}
+gromore_results = {}
+gromore_binding_errors = []
+
+if GROMORE_CHANNEL in selected_channels:
+    st.subheader("3. 上传 GroMore 广告位文件")
+    st.caption(
+        "可一次上传多个 xls/xlsx。请将文件名改为产品名称或应用ID，例如“晴感天气助手.xlsx”或“42123.xlsx”。"
+    )
+    uploaded_gromore_files = st.file_uploader(
+        "选择 GroMore 广告位文件",
+        type=["xls", "xlsx"],
+        accept_multiple_files=True,
+        key="gromore_ad_files",
+    )
+
+    product_keys = {}
+    for idx, row in edited_df.iterrows():
+        for value in (row.get("应用名称", ""), row.get("应用ID", "")):
+            key = normalize_file_key(clean_val(value).strip())
+            if key:
+                product_keys.setdefault(key, []).append(idx)
+
+    for uploaded_file in uploaded_gromore_files:
+        file_stem = os.path.splitext(uploaded_file.name)[0]
+        matched_rows = list(dict.fromkeys(product_keys.get(normalize_file_key(file_stem), [])))
+        if not matched_rows:
+            gromore_binding_errors.append(f"{uploaded_file.name}：未找到同名产品或应用ID")
+            continue
+        if len(matched_rows) > 1:
+            gromore_binding_errors.append(f"{uploaded_file.name}：匹配到多个产品，请检查重复的产品名称或应用ID")
+            continue
+        row_idx = matched_rows[0]
+        if row_idx in gromore_files_by_row:
+            gromore_binding_errors.append(f"第 {row_idx + 1} 行产品上传了多个广告位文件")
+            continue
+        gromore_files_by_row[row_idx] = uploaded_file
+
+    status_rows = []
+    for idx, row in edited_df.iterrows():
+        app_name = clean_val(row.get("应用名称", "")).strip()
+        app_id = clean_val(row.get("应用ID", "")).strip()
+        sdk_appid = clean_val(row.get("GroMore sdk-appid", "")).strip()
+        uploaded_file = gromore_files_by_row.get(idx)
+        status = "等待上传"
+        detail = ""
+
+        if uploaded_file:
+            try:
+                ad_positions = read_gromore_ad_file(uploaded_file)
+                output_df, missing, unused = create_gromore_rows(app_id, sdk_appid, ad_positions)
+                gromore_results[idx] = {
+                    "data": output_df,
+                    "missing": missing,
+                    "unused": unused,
+                    "source_name": uploaded_file.name,
+                }
+                if missing:
+                    status = f"缺少 {len(missing)} 项"
+                    detail = "、".join(missing)
+                else:
+                    status = f"已匹配 {len(output_df)}/{len(output_df)}"
+                    detail = f"另有 {len(unused)} 个未使用广告位" if unused else "可生成"
+            except Exception as exc:
+                status = "文件错误"
+                detail = str(exc)
+
+        status_rows.append({
+            "产品": app_name or f"第 {idx + 1} 行",
+            "绑定文件": uploaded_file.name if uploaded_file else "",
+            "匹配状态": status,
+            "说明": detail,
+        })
+
+    st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+    for message in gromore_binding_errors:
+        st.error(message)
+
+# 4. 生成
 st.markdown("---")
 if st.button("🚀 立即生成配置文档", type="primary"):
     if not selected_channels:
@@ -417,12 +584,38 @@ if st.button("🚀 立即生成配置文档", type="primary"):
                             seen_ids[key].append((idx+1, col_name))
                         else:
                             seen_ids[key] = [(idx+1, col_name)]
+
+            gromore_appid = clean_val(row.get("GroMore sdk-appid", "")).strip()
+            if GROMORE_CHANNEL in selected_channels:
+                if not gromore_appid:
+                    st.error(f"第 {idx+1} 行 [GroMore sdk-appid]：不能为空")
+                    has_error = True
+                elif not gromore_appid.isdigit():
+                    st.error(f"第 {idx+1} 行 [GroMore sdk-appid]：必须为纯数字，当前值: {gromore_appid}")
+                    has_error = True
+                else:
+                    has_any_adid = True
+                    key = f"GroMore sdk-appid:{gromore_appid}"
+                    seen_ids.setdefault(key, []).append((idx + 1, "GroMore sdk-appid"))
+
+                if idx not in gromore_files_by_row:
+                    st.error(f"第 {idx+1} 行 [{app_name or '未命名产品'}]：未绑定 GroMore 广告位文件")
+                    has_error = True
+                elif idx not in gromore_results:
+                    st.error(f"第 {idx+1} 行 [{app_name or '未命名产品'}]：GroMore 文件读取失败")
+                    has_error = True
+                elif gromore_results[idx]["missing"]:
+                    missing_text = "、".join(gromore_results[idx]["missing"])
+                    st.error(f"第 {idx+1} 行 [{app_name or '未命名产品'}]：缺少广告位 {missing_text}")
+                    has_error = True
             
             if not has_any_adid:
                 st.error(f"第 {idx+1} 行：至少需要填写一个平台的广告ID")
                 has_error = True
         
         # 报告重复ID
+        if gromore_binding_errors:
+            has_error = True
         for key, locations in seen_ids.items():
             if len(locations) > 1:
                 col_label = key.split(":")[0]
@@ -466,6 +659,8 @@ if st.button("🚀 立即生成配置文档", type="primary"):
                         continue
                     
                     for ch in selected_channels:
+                        if ch == GROMORE_CHANNEL:
+                            continue
                         # 找到该渠道对应的列
                         target_col = None
                         for col_name, info in COLUMN_PLATFORM.items():
@@ -495,6 +690,13 @@ if st.button("🚀 立即生成配置文档", type="primary"):
                             appid_row = [app_id, platform_info["platform"], "", platform_info["account_id"], ad_id, ""]
                             if appid_row not in appid_rows:
                                 appid_rows.append(appid_row)
+
+                    if GROMORE_CHANNEL in selected_channels and idx in gromore_results:
+                        gromore_df = gromore_results[idx]["data"]
+                        if not gromore_df.empty and not gromore_results[idx]["missing"]:
+                            xls_data = create_xls_file(gromore_df)
+                            zf.writestr(f"GroMore_{app_name}M聚合广告源导入.xls", xls_data.getvalue())
+                            file_count += 1
                 
                 # 生成 Appid 管理导入模板
                 if appid_rows:

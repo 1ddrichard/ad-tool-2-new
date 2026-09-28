@@ -1,0 +1,12 @@
+平台,广告源类型,广告使用类型,"区分应用内外(""应用外""和""应用内"")","bidding模式(""是""和""否"")",广告拓展名,sdk-code,sdk-appid,sdk-appkey,所属应用,所属子渠道,备注,广告策略,广告配置子渠道,预估ecpm,分配比例,自定义参数,替换已有code
+Mjuhe,视频,视频,应用内,否,vnewgongjuhb,,, , ,csj,,video_waterfall_bid_new_gongjuhb,,3,100,,
+Mjuhe,视频,视频,应用内,否,vnewhb,,, , ,csj,,video_waterfall_bid_new_hb,,3,100,,
+Mjuhe,开屏,开屏,应用内,否,c,,, , ,csj,,splash_waterfall_c,,3,100,,
+Mjuhe,开屏,开屏,应用内,否,bidnew,,, , ,csj,,splash_waterfall_bid_new,,3,100,,
+Mjuhe,开屏,开屏,应用内,否,bidnewhb,,, , ,csj,,splash_waterfall_bid_new_hb,,3,100,,
+Mjuhe,插屏视频,插屏,应用内,否,pnewgongjuhb,,, , ,csj,,plaque_waterfall_bid_new_gongjuhb,,3,100,,
+Mjuhe,插屏视频,插屏,应用内,否,pnewhb,,, , ,csj,,plaque_waterfall_bid_new_hb,,3,100,,
+Mjuhe,插屏视频,插屏,应用内,否,pnewhb2,,, , ,csj,,plaque_waterfall_bid_new_hb2,,3,100,,
+Mjuhe,插屏视频,插屏,应用内,否,halfplaqueonly,,, , ,csj,,plaque_waterfall_halfplaque_only,,3,100,,
+Mjuhe,插屏视频,插屏,应用内,否,halfplaqueonly2,,, , ,csj,,plaque_waterfall_halfplaque_only2,,3,100,,
+Mjuhe,信息流模板,信息流,应用内,否,ecpmyes,,, , ,csj,,msg_waterfall_ecpm_yes,,3,100,,
